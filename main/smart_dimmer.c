@@ -19,14 +19,22 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
-// triac conduction state, used for triac triggering sequence
+// Minimum us delay from ZCI to triac trigger, used to compensate for ZC circuit trigger point
+#define MIN_TRIG_DELAY 1000
+
+// Amount of microseconds the gate is kept HIGH after trigger activation
+#define TURN_OFF_DELAY 2000
+
+// Triac conduction state, used for triac triggering sequence
 volatile bool triac_triggered = false;
 
-// Minimum us delay from ZCI to triac trigger, used to compensate for ZC circuit trigger point
-#define MIN_TRIG_DELAY 100
+// Delay between ZCI and triggering the triac into conduction
+volatile int trig_delay = MIN_TRIG_DELAY;
+
+
 
 // Triac Pin
-#define GPIO_OUTPUT_IO_0    15
+#define GPIO_OUTPUT_IO_0    5
 // LED Pin
 #define GPIO_OUTPUT_IO_1    16
 // Output pin mask
@@ -41,6 +49,8 @@ volatile bool triac_triggered = false;
  */
 static void zerocross_interrupt(){
 
+	// Set timer for gate delay
+	hw_timer_alarm_us(trig_delay, false);
 
 }
 
@@ -89,6 +99,32 @@ void init_gpio(){
  */
 void timer_callback(){
 
+	if(triac_triggered){
+		// Triac is conducting and gate is HIGH => Change gate to low & reset sequence
+
+		// Gate to LOW
+		gpio_set_level(GPIO_OUTPUT_IO_0, 0);
+
+		// Reset sequence
+		triac_triggered = false;
+
+
+	}
+	else{
+		// Triac is not conducting and dt from ZCI is equal to trig_delay
+		// => Change gate to HIGH & set timer for TURN_OFF_DELAY
+
+		// Gate to HIGH
+		gpio_set_level(GPIO_OUTPUT_IO_0, 1);
+
+		// Set timer for TURN_OFF_DELAY
+		hw_timer_alarm_us(TURN_OFF_DELAY, false);
+
+		// Triac is now triggered
+		triac_triggered = true;
+
+	}
+
 
 }
 
@@ -98,7 +134,7 @@ void timer_callback(){
 void init_timer(){
 
 	// Init timer
-	hw_timer_init(init_timer, NULL);
+	hw_timer_init(timer_callback, NULL);
 
 }
 
@@ -110,14 +146,17 @@ void app_main()
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     printf("Archangelooo!!\n");
 
+
+    init_timer();
     init_gpio();
+
+    gpio_set_level(GPIO_OUTPUT_IO_0, 0);
 
     int cnt = 0;
 
     while (1) {
     	printf("tik\n");
 		vTaskDelay(500 / portTICK_RATE_MS);
-		gpio_set_level(GPIO_OUTPUT_IO_0, cnt % 2);
 		gpio_set_level(GPIO_OUTPUT_IO_1, cnt % 2);
 		cnt++;
 	}
