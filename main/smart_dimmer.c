@@ -15,6 +15,7 @@
 
 #include "driver/gpio.h"
 #include "driver/hw_timer.h"
+#include "driver/adc.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -23,13 +24,17 @@
 #define MIN_TRIG_DELAY 1000
 
 // Amount of microseconds the gate is kept HIGH after trigger activation
-#define TURN_OFF_DELAY 2000
+#define TURN_OFF_DELAY 500
 
 // Triac conduction state, used for triac triggering sequence
 volatile bool triac_triggered = false;
 
 // Delay between ZCI and triggering the triac into conduction
 volatile int trig_delay = MIN_TRIG_DELAY;
+
+// ADC raw value
+uint16_t adc_data[100];
+
 
 
 
@@ -140,6 +145,42 @@ void init_timer(){
 
 
 
+static void adc_task()
+{
+
+
+    while (1) {
+       adc_read(&adc_data[0]);
+
+       if(*adc_data < 255){
+    	   trig_delay = MIN_TRIG_DELAY*8;
+       }else if(*adc_data < 512){
+    	   trig_delay = MIN_TRIG_DELAY*5;
+       }
+       else if(*adc_data < 767){
+           trig_delay = MIN_TRIG_DELAY*3;
+       }else{
+    	   trig_delay = MIN_TRIG_DELAY;
+       }
+
+       vTaskDelay(200 / portTICK_RATE_MS);
+    }
+}
+
+void init_adc(){
+	 // 1. init adc
+	adc_config_t adc_config;
+
+	// Depend on menuconfig->Component config->PHY->vdd33_const value
+	// When measuring system voltage(ADC_READ_VDD_MODE), vdd33_const must be set to 255.
+	adc_config.mode = ADC_READ_TOUT_MODE;
+	adc_config.clk_div = 8; // ADC sample collection clock = 80MHz/clk_div = 10MHz
+	ESP_ERROR_CHECK(adc_init(&adc_config));
+
+}
+
+
+
 void app_main()
 {
     printf("Hail Saaatan!\n");
@@ -149,14 +190,17 @@ void app_main()
 
     init_timer();
     init_gpio();
+    init_adc();
 
     gpio_set_level(GPIO_OUTPUT_IO_0, 0);
 
     int cnt = 0;
 
+    xTaskCreate(adc_task, "adc_task", 1024, NULL, 5, NULL);
+
     while (1) {
-    	printf("tik\n");
-		vTaskDelay(500 / portTICK_RATE_MS);
+    	//printf("tik\n");
+		vTaskDelay(1000 / portTICK_RATE_MS);
 		gpio_set_level(GPIO_OUTPUT_IO_1, cnt % 2);
 		cnt++;
 	}
